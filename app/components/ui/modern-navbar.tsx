@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -15,7 +16,8 @@ import {
   Sun,
   Moon,
   Globe,
-  Wand2
+  Wand2,
+  Share2
 } from 'lucide-react';
 import { StudioMode } from '@/lib/types';
 
@@ -108,6 +110,12 @@ export function ModernNavbar({ currentMode, onModeChange }: ModernNavbarProps) {
 
         {/* Right side actions */}
         <div className="flex items-center gap-2">
+          {/* Agentic View nav */}
+          <Link href="/agents" className="hidden sm:block">
+            <Button variant="outline" size="sm" className="gap-2">
+              <Share2 className="h-4 w-4" /> Agentic View
+            </Button>
+          </Link>
           
           {/* Theme toggle */}
           <Button
@@ -160,6 +168,13 @@ export function ModernNavbar({ currentMode, onModeChange }: ModernNavbarProps) {
                     </Button>
                   );
                 })}
+
+                {/* Agentic View (mobile) */}
+                <Link href="/agents">
+                  <Button variant="outline" className="justify-start w-full mt-2">
+                    <Share2 className="h-4 w-4 mr-3" /> Agentic View
+                  </Button>
+                </Link>
                 
                 <div className="border-t pt-4 mt-6">
                   <Button

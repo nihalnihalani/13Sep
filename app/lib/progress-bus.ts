@@ -2,8 +2,11 @@
 // Uses globalThis to persist across hot reloads in Next.js dev.
 
 export type ProgressMessage = {
-  text: string;
+  text?: string;
   ts?: number;
+  agentId?: string; // optional structured node id (e.g., "imagen.generate")
+  status?: "start" | "success" | "error" | "info"; // optional status
+  data?: Record<string, any>; // optional payload
 };
 
 type Subscriber = {

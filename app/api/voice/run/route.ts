@@ -9,12 +9,12 @@ type Demographic = {
   country?: string;
 };
 
-async function push(session: string, message: string) {
+async function push(session: string, message: string, agentId?: string, status?: "start" | "success" | "error" | "info", data?: any) {
   try {
     await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/api/progress/push`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session, message })
+      body: JSON.stringify({ session, message, agentId, status, data })
     });
   } catch {}
 }
@@ -27,13 +27,13 @@ export async function POST(req: Request) {
     const demographics: Demographic[] = Array.isArray(body?.demographics) ? body.demographics : [];
 
     if (!demographics.length) {
-      await push(session, 'Voice run aborted: no demographics provided.');
+      await push(session, 'Voice run aborted: no demographics provided.', 'voice.run', 'error');
       return NextResponse.json({ ok: false, error: 'No demographics' }, { status: 400 });
     }
 
     // 1) Analyze image (optional)
     if (imageUrl) {
-      await push(session, 'Analyzing image from URL...');
+      await push(session, 'Analyzing image from URL...', 'vision.analyze', 'start', { imageUrl });
       try {
         const res = await fetch(imageUrl);
         if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
@@ -43,14 +43,15 @@ export async function POST(req: Request) {
         form.append('image', blob, 'input');
         const analyze = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/api/vision/analyze`, { method: 'POST', body: form });
         if (!analyze.ok) throw new Error(await analyze.text());
-        await analyze.json(); // Not used here; client builds prompts anyway
+        const insights = await analyze.json();
+        await push(session, 'Image analysis complete.', 'vision.analyze', 'success', { insights });
       } catch (e: any) {
-        await push(session, `Image analysis failed: ${e?.message || e}`);
+        await push(session, `Image analysis failed: ${e?.message || e}`, 'vision.analyze', 'error');
       }
     }
 
     // 2) For each demographic: get cultural signals, build prompt, generate image
-    await push(session, `Fetching cultural signals for default campaign + ${demographics.length} demographics...`);
+    await push(session, `Fetching cultural signals for default campaign + ${demographics.length} demographics...`, 'cultural.intelligence', 'start');
     for (const d of demographics) {
       const city = d.city || d.title;
       const country = d.country || d.title;
@@ -68,36 +69,37 @@ export async function POST(req: Request) {
         `Create a visually striking, brand-safe image tailored to ${d.title}${d.city || d.country ? ` (${[d.city, d.country].filter(Boolean).join(', ')})` : ''}.`
       ].filter(Boolean).join('\n');
 
-      await push(session, `Generating image for ${d.title}...`);
+      await push(session, `Generating image for ${d.title}...`, 'imagen.generate', 'start', { demographic: d });
       const gen = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/api/imagen/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt })
       });
       if (!gen.ok) {
-        await push(session, `Image failed for ${d.title}: ${gen.status}`);
+        await push(session, `Image failed for ${d.title}: ${gen.status}`, 'imagen.generate', 'error');
       } else {
-        await push(session, `Image ready for ${d.title}.`);
+        const img = await gen.json().catch(() => null);
+        await push(session, `Image ready for ${d.title}.`, 'imagen.generate', 'success', { image: img?.image, media: img?.media });
       }
     }
 
     // 3) For each demographic: generate video and poll
-    await push(session, 'Generating videos one-by-one for default campaign + demographics...');
+    await push(session, 'Generating videos one-by-one for default campaign + demographics...', 'veo.generate', 'start');
     for (const d of demographics) {
       const prompt = d.description ? `${d.title}: ${d.description}` : d.title;
-      await push(session, `Generating video for ${d.title}...`);
+      await push(session, `Generating video for ${d.title}...`, 'veo.generate', 'start', { demographic: d });
       const form = new FormData();
       form.append('prompt', prompt);
       form.append('model', 'veo-3.0-generate-001');
       const resp = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || ''}/api/veo/generate`, { method: 'POST', body: form });
       if (!resp.ok) {
-        await push(session, `Video start failed for ${d.title}: ${resp.status}`);
+        await push(session, `Video start failed for ${d.title}: ${resp.status}`, 'veo.generate', 'error');
         continue;
       }
       const gen = await resp.json();
       const name = gen?.name as string | undefined;
       if (!name) {
-        await push(session, `Video operation missing name for ${d.title}.`);
+        await push(session, `Video operation missing name for ${d.title}.`, 'veo.operation', 'error');
         continue;
       }
       let attempts = 0;
@@ -116,6 +118,7 @@ export async function POST(req: Request) {
             const alt = fresh?.response?.candidates?.[0]?.content?.parts?.find((p: any) => p?.video_metadata?.file_uri)?.video_metadata?.file_uri;
             const fromList = Array.isArray(fresh?.uris) && fresh.uris.length > 0 ? fresh.uris[0] : null;
             fileUri = primary || alt || fromList || null;
+            await push(session, `Video operation completed for ${d.title}.`, 'veo.operation', 'success', { uris: fresh?.uris });
             break;
           }
         }
@@ -130,14 +133,14 @@ export async function POST(req: Request) {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ uri: fileUri, save: true })
       });
       if (!dl.ok) {
-        await push(session, `Download/save failed for ${d.title}: ${dl.status}`);
+        await push(session, `Download/save failed for ${d.title}: ${dl.status}`, 'veo.download', 'error');
       } else {
         const saved = await dl.json();
-        await push(session, `Saved video URL for ${d.title}: ${saved?.url || 'n/a'}`);
+        await push(session, `Saved video URL for ${d.title}: ${saved?.url || 'n/a'}`, 'veo.download', 'success', { media: saved });
       }
     }
 
-    await push(session, 'Voice flow complete.');
+    await push(session, 'Voice flow complete.', 'voice.run', 'success');
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || 'Failed' }, { status: 500 });
